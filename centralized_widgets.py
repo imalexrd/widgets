@@ -600,6 +600,146 @@ class SettingsWidget(DesktopWidget):
             else: w.deiconify()
         except: pass
 
+# --- WIDGET 9: WHITEBOARD ---
+class WhiteboardWidget(DesktopWidget):
+    def __init__(self, master, x, y):
+        self.draw_color = "white"
+        self.brush_size = 2
+        self.last_x, self.last_y = None, None
+        self.is_transparent = False
+        super().__init__(master, x, y, "Whiteboard")
+
+    def config_window(self, x, y):
+        # Override to allow custom size and resizing
+        self.geometry(f"300x200+{x}+{y}")
+        self.configure(bg=THEME['bg'])
+        self.overrideredirect(True)
+        self.attributes('-topmost', True)
+        self.attributes('-alpha', THEME['alpha'])
+
+    def setup_drag(self):
+        # Initializes drag data but does NOT bind to self (window)
+        # We only want to drag from the toolbar
+        self._drag_data = {"x": 0, "y": 0}
+
+    def setup_ui(self):
+        # Toolbar (Top) - Handles dragging
+        self.toolbar = tk.Frame(self, bg="#1a1a1a", height=28)
+        self.toolbar.pack(side="top", fill="x")
+        self.toolbar.pack_propagate(False)
+        
+        # Bind Drag to Toolbar
+        self.toolbar.bind("<Button-1>", self.on_drag_start)
+        self.toolbar.bind("<B1-Motion>", self.on_drag_motion)
+        
+        # Title/Grip Area
+        lbl_title = tk.Label(self.toolbar, text=":::", fg="#555", bg="#1a1a1a", cursor="fleur")
+        lbl_title.pack(side="left", padx=5)
+        lbl_title.bind("<Button-1>", self.on_drag_start)
+        lbl_title.bind("<B1-Motion>", self.on_drag_motion)
+
+        # Colors
+        colors = [("white", "#ffffff"), ("cyan", "#00e5ff"), ("green", "#00e676"), ("red", "#ff1744"), ("yellow", "#f1c40f")]
+        for name, col in colors:
+            l = tk.Label(self.toolbar, bg=col, width=2, height=1, cursor="hand2")
+            l.pack(side="left", padx=2, pady=4)
+            l.bind("<Button-1>", lambda e, c=col: self.set_color(c, 2))
+            
+        # Eraser
+        btn_erase = tk.Label(self.toolbar, text="⌫", font=("Segoe UI", 10), fg="#aaa", bg="#1a1a1a", cursor="hand2")
+        btn_erase.pack(side="left", padx=5)
+        btn_erase.bind("<Button-1>", lambda e: self.set_color(THEME['bg'], 12)) # Eraser uses BG color (will update if transp)
+        
+        # Transparency Toggle
+        self.btn_transp = tk.Label(self.toolbar, text="▢", font=("Segoe UI", 12), fg="#aaa", bg="#1a1a1a", cursor="hand2")
+        self.btn_transp.pack(side="right", padx=5)
+        self.btn_transp.bind("<Button-1>", self.toggle_transparency)
+        self.btn_transp.bind("<Enter>", lambda e: self.btn_transp.config(fg="white"))
+        self.btn_transp.bind("<Leave>", lambda e: self.btn_transp.config(fg="#aaa"))
+
+        # Clear
+        btn_clear = tk.Label(self.toolbar, text="🗑", font=("Segoe UI", 10), fg="#aaa", bg="#1a1a1a", cursor="hand2")
+        btn_clear.pack(side="right", padx=5)
+        btn_clear.bind("<Button-1>", self.clear_canvas)
+
+        # Canvas
+        self.canvas = tk.Canvas(self, bg=THEME['bg'], highlightthickness=0, cursor="crosshair")
+        self.canvas.pack(fill="both", expand=True)
+        
+        self.canvas.bind("<Button-1>", self.start_draw)
+        self.canvas.bind("<B1-Motion>", self.draw)
+        self.canvas.bind("<ButtonRelease-1>", self.stop_draw)
+        
+        # Resize Grip (Bottom Right)
+        self.grip = tk.Label(self, text="◢", font=("Arial", 10), bg=THEME['bg'], fg="#444", cursor="size_nw_se")
+        self.grip.place(relx=1.0, rely=1.0, anchor="se")
+        self.grip.bind("<Button-1>", self.start_resize)
+        self.grip.bind("<B1-Motion>", self.perform_resize)
+
+    def set_color(self, col, size):
+        # If we are in transparent mode and erasing, we need the transparent color
+        current_bg = self.canvas.cget("bg")
+        if col == THEME['bg'] and self.is_transparent:
+           self.draw_color = "#010101" # The transparency key
+        elif col == THEME['bg']:
+            self.draw_color = current_bg # Regular eraser
+        else:
+            self.draw_color = col
+            
+        self.brush_size = size
+
+    def toggle_transparency(self, event=None):
+        self.is_transparent = not self.is_transparent
+        
+        if self.is_transparent:
+            # Enable Transparency
+            # Use a dark color close to black as the key, so user doesn't see a flash
+            transp_color = "#010101" 
+            self.attributes('-transparentcolor', transp_color)
+            self.canvas.config(bg=transp_color)
+            self.grip.config(bg=transp_color)
+            self.configure(bg=transp_color)
+            self.btn_transp.config(text="▣", fg=THEME['accent_cyan'])
+        else:
+            # Disable Transparency
+            self.attributes('-transparentcolor', '')
+            self.canvas.config(bg=THEME['bg'])
+            self.grip.config(bg=THEME['bg'])
+            self.configure(bg=THEME['bg'])
+            self.btn_transp.config(text="▢", fg="#aaa")
+
+    def clear_canvas(self, event=None):
+        self.canvas.delete("all")
+
+    def start_draw(self, event):
+        self.last_x, self.last_y = event.x, event.y
+
+    def draw(self, event):
+        if self.last_x and self.last_y:
+            x, y = event.x, event.y
+            self.canvas.create_line(self.last_x, self.last_y, x, y, 
+                                    width=self.brush_size, fill=self.draw_color, 
+                                    capstyle="round", smooth=True)
+            self.last_x, self.last_y = x, y
+
+    def stop_draw(self, event):
+        self.last_x, self.last_y = None, None
+
+    # Resize Handling
+    def start_resize(self, event):
+        self.resize_start_x = event.x_root
+        self.resize_start_y = event.y_root
+        self.start_w = self.winfo_width()
+        self.start_h = self.winfo_height()
+
+    def perform_resize(self, event):
+        delta_x = event.x_root - self.resize_start_x
+        delta_y = event.y_root - self.resize_start_y
+        
+        new_w = max(100, self.start_w + delta_x)
+        new_h = max(100, self.start_h + delta_y)
+        
+        self.geometry(f"{new_w}x{new_h}")
 
 # --- MAIN APPLICATION MANAGER ---
 class CentralApp:
@@ -653,6 +793,12 @@ class CentralApp:
         
         x, y = get_pos(1, 3)
         self.w8 = ClockWidget(self.root, x, y)
+        
+        # Whiteboard (New) - Free placement
+        # Place it to the right of column 1
+        x_wb = margin_x + (2 * (w_width + gap))
+        y_wb = screen_h - margin_y - (2 * (w_height + gap)) # Roughly middle height
+        self.w_whiteboard = WhiteboardWidget(self.root, x_wb, y_wb)
 
         # Settings Widget: Placed above Col 0, but with custom gap since it's slimmer
         # Monitor is at get_pos(0, 3). Settings should be just above it.
@@ -670,7 +816,8 @@ class CentralApp:
             "Notes": self.w5, 
             "Launcher": self.w6, 
             "Lexicon": self.w7, 
-            "Clock": self.w8
+            "Clock": self.w8,
+            "Whiteboard": self.w_whiteboard
         }
         self.w9 = SettingsWidget(self.root, sx, sy, all_widgets)
 
